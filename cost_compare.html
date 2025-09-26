@@ -23,7 +23,7 @@
     .grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
     .card{background:#0e1628;border:1px solid #24314f;border-radius:12px;padding:12px}
     .card b{display:block;font-size:18px}
-    .chart-wrap{position:relative;height:520px}
+    .chart-wrap{position:relative;height:600px}
     canvas{display:block;width:100%;height:100%}
     .legend{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
     .legend .item{display:flex;align-items:center;gap:6px;padding:6px 10px;border:1px solid #223154;border-radius:999px;background:#0e1628}
@@ -58,18 +58,13 @@
           </select>
         </div>
         <div>
-          <label>&nbsp;</label>
-          <button id="drawBtn" class="primary" type="button">Redraw</button>
-        </div>
-        <div>
           <label>Display</label>
           <div class="row" style="gap:8px">
             <label class="pill" style="gap:6px"><input id="toggleIntersections" type="checkbox" checked /> Show intersections</label>
-            <label class="pill" style="gap:6px"><input id="toggleDelta" type="checkbox" checked /> Show HSA 60 − HSA 80</label>
+            <label class="pill" style="gap:6px"><input id="toggleDelta" type="checkbox" /> Show HSA 60 − HSA 80</label>
           </div>
         </div>
       </div>
-      <div class="muted" style="margin-top:8px">Data below is baked-in for the selected coverage and does not require any upload.</div>
     </section>
 
     <section class="panel" style="margin-top:16px">
@@ -328,11 +323,11 @@
       const ins = $('insights'); ins.innerHTML = '';
       if($('toggleIntersections').checked && crosses.length){
         const byPair = document.createElement('div'); byPair.className='card';
-        let html = '<b>Intersections</b><ul style="margin:6px 0 0 16px">';
+        let html = '<b>Intersections</b><div style="margin-top:6px;display:flex;flex-direction:column;gap:4px">';
         for(const c of crosses){
-          html += `<li><span class="muted">${c.a}</span> crosses <span class="muted">${c.b}</span> at <b>$${fmt(Math.round(c.x))}</b> (cost ≈ $${fmt(Math.round(c.y))})</li>`;
+          html += `<div><span class="muted">${c.a}</span> crosses <span class="muted">${c.b}</span> at <b>$${fmt(Math.round(c.x))}</b> (cost ≈ $${fmt(Math.round(c.y))})</div>`;
         }
-        html += '</ul>';
+        html += '</div>';
         byPair.innerHTML = html; ins.appendChild(byPair);
       }
 
@@ -343,15 +338,26 @@
     }
 
     // Event handlers (single registration)
-    $('drawBtn').addEventListener('click', draw);
     $('tier').addEventListener('change', draw);
     $('toggleIntersections').addEventListener('change', draw);
     $('toggleDelta').addEventListener('change', draw);
     $('exportBtn').addEventListener('click', () => {
       if(!chart){ draw(); }
       const tier = $('tier').value;
-      const url = chart.toBase64Image();
-      const a = document.createElement('a'); a.href = url; a.download = `health-plan-comparison-${tier.toLowerCase()}.png`; a.click();
+      const canvas = $('chart');
+      // Create a white-backed copy to avoid transparent PNG background
+      const tmp = document.createElement('canvas');
+      tmp.width = canvas.width;
+      tmp.height = canvas.height;
+      const ctx2 = tmp.getContext('2d');
+      ctx2.fillStyle = '#ffffff';
+      ctx2.fillRect(0,0,tmp.width,tmp.height);
+      ctx2.drawImage(canvas,0,0);
+      const url = tmp.toDataURL('image/png');
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `health-plan-comparison-${tier.toLowerCase()}.png`;
+      a.click();
     });
 
     // --- simple console self-tests to guard regressions ---
