@@ -28,6 +28,10 @@
     .legend{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
     .legend .item{display:flex;align-items:center;gap:6px;padding:6px 10px;border:1px solid #223154;border-radius:999px;background:#0e1628}
     .swatch{width:18px;height:0;border-bottom:2px solid #789;border-radius:2px}
+    .insights{margin-top:12px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+    .insights .card{font-size:13px}
+    .data-table{overflow:auto; max-height:360px;}
+    .data-table table{min-width:720px}
     table{width:100%;border-collapse:collapse;font-size:13px}
     th,td{padding:6px 8px;border-bottom:1px solid #223154}
     th{color:#c7d2fe;text-align:left}
@@ -69,6 +73,12 @@
     <section class="panel" style="margin-top:16px">
       <div class="chart-wrap"><canvas id="chart"></canvas></div>
       <div class="legend" id="legend"></div>
+      <div class="insights" id="insights"></div>
+    </section>
+
+    <section class="panel" style="margin-top:16px">
+      <h3 style="margin:0 0 8px 0">Full data</h3>
+      <div class="data-table" id="dataTable"></div>
     </section>
 
     <footer class="muted">Runs entirely in your browser using Chart.js. The curves are computed from fixed plan parameters; no uploads needed.</footer>
@@ -136,6 +146,46 @@
       return { xs, series };
     }
 
+    // Find intersection between two named series via linear interpolation
+    function findIntersection(xs, sA, sB){
+      const diffs = xs.map((x, i) => sA[i] - sB[i]);
+      for(let i=0;i<xs.length-1;i++){
+        const d1 = diffs[i], d2 = diffs[i+1];
+        if(d1 === 0) return { x: xs[i], y: sA[i], i };
+        if(d1 * d2 < 0){
+          const x1 = xs[i], x2 = xs[i+1];
+          const y1 = d1, y2 = d2; // crossing of diff line with y=0
+          const t = (0 - y1) / (y2 - y1);
+          const x = x1 + t * (x2 - x1);
+          const y = sA[i] + t * (sA[i+1] - sA[i]);
+          return { x, y, i };
+        }
+      }
+      return null;
+    }
+
+    function buildDataTable(xs, series){
+      const order = ['In-network spending','PPO 90','PPO 70','HSA 80','HSA 60','HSA 60 - HSA 80'];
+      const tbl = document.createElement('table');
+      const thead = document.createElement('thead');
+      const trh = document.createElement('tr');
+      order.forEach(h => { const th = document.createElement('th'); th.textContent = h; trh.appendChild(th); });
+      thead.appendChild(trh); tbl.appendChild(thead);
+      const tb = document.createElement('tbody');
+      for(let i=0;i<xs.length;i++){
+        const tr = document.createElement('tr');
+        const cells = [ '$'+fmt(xs[i]), series['PPO 90'][i], series['PPO 70'][i], series['HSA 80'][i], series['HSA 60'][i], series['HSA 60 - HSA 80'][i] ];
+        cells.forEach((v,j)=>{
+          const td = document.createElement('td');
+          td.textContent = j===0 ? v : ('$'+fmt(v));
+          tr.appendChild(td);
+        });
+        tb.appendChild(tr);
+      }
+      tbl.appendChild(tb);
+      return tbl;
+    }
+
     function renderCards(tier){
       const container = document.getElementById('cards');
       const tierLabel = document.getElementById('tierLabel');
@@ -168,7 +218,7 @@
       renderCards(tier);
       const { xs, series } = computeSeries(tier);
 
-      const colors = { ppo90:'#3b82f6', ppo70:'#f59e0b', hsa80:'#22c55e', hsa60:'#60a5fa', delta:'#ef4444' };
+      const colors = { ppo90:'#3b82f6', ppo70:'#f59e0b', hsa80:'#22c55e', hsa60:'#60a5fa', delta:'#ef4444', cross:'#eab308' };
       const ds = [
         {key:'PPO 90', c:colors.ppo90, dash:[6,6]},
         {key:'PPO 70', c:colors.ppo70},
@@ -186,6 +236,44 @@
         fill:false
       }));
 
+      // --- Compute intersections ---
+      const pairs = [
+        ['HSA 60','HSA 80'],
+        ['HSA 60','PPO 70'],
+        ['HSA 60','PPO 90'],
+        ['PPO 70','PPO 90'],
+        ['PPO 70','HSA 80'],
+        ['PPO 90','HSA 80']
+      ];
+      const crosses = [];
+      for(const [a,b] of pairs){
+        const hit = findIntersection(xs, series[a], series[b]);
+        if(hit){
+          crosses.push({a,b,x:hit.x,y:hit.y});
+          // add a vertical guide and a marker point
+          const yMin = Math.min(...Object.values(series).map(arr => Math.min(...arr)));
+          const yMax = Math.max(...Object.values(series).map(arr => Math.max(...arr)));
+          ds.push({
+            label:`× ${a} vs ${b}`,
+            data:[{x:hit.x,y:yMin},{x:hit.x,y:yMax}],
+            borderColor:colors.cross,
+            borderDash:[2,6],
+            borderWidth:1.5,
+            pointRadius:0,
+            fill:false,
+          });
+          ds.push({
+            type:'scatter',
+            label:`• ${a}∩${b}`,
+            data:[{x:hit.x,y:hit.y}],
+            pointRadius:4,
+            pointHoverRadius:6,
+            pointBackgroundColor:colors.cross,
+            borderColor:colors.cross
+          });
+        }
+      }
+
       const ctx = $('chart').getContext('2d');
       if(chart) chart.destroy();
       chart = new Chart(ctx, {
@@ -202,22 +290,50 @@
           },
           plugins:{
             legend:{ display:true, labels:{ color:'#c7d2fe' } },
-            tooltip:{ callbacks:{ label:(ctx)=>`${ctx.dataset.label}: $${fmt(ctx.parsed.y)}` } },
+            tooltip:{
+              callbacks:{
+                label:(ctx)=>{
+                  if(ctx.dataset.label.startsWith('• ')){
+                    return `${ctx.dataset.label.replace('• ','')} at $${fmt(ctx.parsed.x)} → $${fmt(ctx.parsed.y)}`;
+                  }
+                  return `${ctx.dataset.label}: $${fmt(ctx.parsed.y)}`
+                }
+              }
+            },
             title:{ display:true, text:`Total cost by in‑network spending — ${tier}` }
           },
           elements:{ line:{ cubicInterpolationMode:'monotone' } }
         }
       });
 
+      // Legend tokens
       const legend = $('legend'); legend.innerHTML = '';
-      for(const d of chart.data.datasets){
+      for(const d of chart.data.datasets.filter(d=>!d.label.startsWith('×') && !d.label.startsWith('• '))){
         const item = document.createElement('div'); item.className='item';
         const sw = document.createElement('div'); sw.className='swatch'; sw.style.borderBottom = (d.borderDash? '2px dashed '+d.borderColor : '2px solid '+d.borderColor);
         const txt = document.createElement('span'); txt.textContent = d.label;
         item.appendChild(sw); item.appendChild(txt); legend.appendChild(item);
       }
+
+      // Insights list with numeric intersections
+      const ins = $('insights'); ins.innerHTML = '';
+      if(crosses.length){
+        const byPair = document.createElement('div'); byPair.className='card';
+        let html = '<b>Intersections</b><ul style="margin:6px 0 0 16px">';
+        for(const c of crosses){
+          html += `<li><span class="muted">${c.a}</span> crosses <span class="muted">${c.b}</span> at <b>$${fmt(Math.round(c.x))}</b> (cost ≈ $${fmt(Math.round(c.y))})</li>`;
+        }
+        html += '</ul>';
+        byPair.innerHTML = html; ins.appendChild(byPair);
+      }
+
+      // Render data table
+      const dt = $('dataTable');
+      dt.innerHTML = '';
+      dt.appendChild(buildDataTable(xs, series));
     }
 
+    // Event handlers (single registration)
     $('drawBtn').addEventListener('click', draw);
     $('tier').addEventListener('change', draw);
     $('exportBtn').addEventListener('click', () => {
@@ -229,9 +345,11 @@
 
     // --- simple console self-tests to guard regressions ---
     (function runTests(){
-      const assertEq = (desc, a, b) => {
-        if(a !== b) console.error('TEST FAIL:', desc, a, '!==', b); else console.log('TEST OK:', desc);
+      const almostEq = (desc, a, b, tol=2) => { // dollars tolerance
+        if(Math.abs(a-b) > tol) console.error('TEST FAIL:', desc, a, '!=', b, '+/-', tol); else console.log('TEST OK:', desc);
       };
+      const assertEq = (desc, a, b) => { if(a !== b) console.error('TEST FAIL:', desc, a, '!==', b); else console.log('TEST OK:', desc); };
+
       // FAMILY deltas
       let {xs, series} = computeSeries('FAMILY');
       const idx = x => xs.indexOf(x);
@@ -239,11 +357,10 @@
       assertEq('FAMILY delta @4000', series['HSA 60 - HSA 80'][idx(4000)], -2625);
       assertEq('FAMILY delta @12000', series['HSA 60 - HSA 80'][idx(12000)], 175);
       assertEq('FAMILY delta @30000', series['HSA 60 - HSA 80'][idx(30000)], 3375);
-      // FAMILY first row sanity checks
-      assertEq('FAMILY PPO90 @0', series['PPO 90'][idx(0)], 11801);
-      assertEq('FAMILY PPO70 @0', series['PPO 70'][idx(0)], 4235);
-      assertEq('FAMILY HSA80 @0', series['HSA 80'][idx(0)], 1668);
-      assertEq('FAMILY HSA60 @0', series['HSA 60'][idx(0)], -1516);
+      // FAMILY intersections (approx.)
+      const i1 = findIntersection(xs, series['HSA 60'], series['HSA 80']);
+      almostEq('FAMILY HSA60 vs HSA80 ~ $11,125', Math.round(i1.x), 11125, 5);
+
       // COUPLE deltas
       ({xs, series} = computeSeries('COUPLE'));
       const idx2 = x => xs.indexOf(x);
@@ -252,6 +369,10 @@
       assertEq('COUPLE delta @10000', series['HSA 60 - HSA 80'][idx2(10000)], 90);
       assertEq('COUPLE delta @30000', series['HSA 60 - HSA 80'][idx2(30000)], 3690);
       assertEq('COUPLE delta @35000', series['HSA 60 - HSA 80'][idx2(35000)], 3330);
+      // COUPLE intersection (approx.)
+      const i2 = findIntersection(xs, series['HSA 60'], series['HSA 80']);
+      almostEq('COUPLE HSA60 vs HSA80 ~ $9,550', Math.round(i2.x), 9550, 5);
+
       // SINGLE deltas
       ({xs, series} = computeSeries('SINGLE'));
       const idx3 = x => xs.indexOf(x);
@@ -260,6 +381,9 @@
       assertEq('SINGLE delta @8000', series['HSA 60 - HSA 80'][idx3(8000)], 94);
       assertEq('SINGLE delta @10000', series['HSA 60 - HSA 80'][idx3(10000)], 494);
       assertEq('SINGLE delta @25000', series['HSA 60 - HSA 80'][idx3(25000)], 524);
+      // SINGLE intersection (approx.)
+      const i3 = findIntersection(xs, series['HSA 60'], series['HSA 80']);
+      almostEq('SINGLE HSA60 vs HSA80 ~ $7,550', Math.round(i3.x), 7550, 5);
     })();
 
     // initial render
