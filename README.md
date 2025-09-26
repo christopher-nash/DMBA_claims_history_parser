@@ -11,7 +11,7 @@ https://www.dmba.com/sc/medical/HealthClaims.aspx?type=medical
 🐍 https://www.python.org/downloads/
 
 Library dependencies:
-* [pdfplumber](https://pypi.org/project/pdfplumber/).
+* [pdfplumber](https://pypi.org/project/pdfplumber/)
 
 Put your exported PDF report (PrintFriendlyEOB.pdf) into the same directory as the script then let it rip.
 
@@ -28,10 +28,18 @@ python extract_claims_to_csv.py PrintFriendlyEOB.pdf history.csv
 🌐 https://github.com/nvm-sh/nvm
 
 Library dependencies:
-* [pdfjs-dist](https://www.npmjs.com/package/pdfjs-dist) by Mozilla 
+* [pdfjs-dist](https://www.npmjs.com/package/pdfjs-dist) by Mozilla
+
+Put your exported PDF report (PrintFriendlyEOB.pdf) into the same directory as the script then let it rip.
 
 ```sh
 npm init -y
 npm i pdfjs-dist
 node extract_claims_to_csv.mjs PrintFriendlyEOB.pdf history.csv
 ```
+
+## DMBA Health Plan Comparison Tool
+
+Now that you've compiled your claims history, head on over to this partner app to compare the various DMBA healthcare plans:
+
+https://dmba-plans.netlify.app/
