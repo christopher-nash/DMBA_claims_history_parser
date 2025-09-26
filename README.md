@@ -1,7 +1,7 @@
 # Convert DMBA Claims History PDF to CSV
 
 https://www.dmba.com/sc/medical/HealthClaims.aspx?type=medical 
-* Choose Prescription, Medical, Year-To-Date, and Detail report type.
+* Choose Prescription & Medical, Year-To-Date, and Detail report type.
 
 ![Medical Claims](/docs/medical_claims.png)
 ![Claims History Report Builder](/docs/claims_history_report_builder.png)
