@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>2026 Health Plans – Total Cost Comparator</title>
+  <style>
+    :root { --bg:#0b1220; --panel:#121a2b; --ink:#e8eefc; --muted:#9fb0d0; --accent:#84a8ff; --ok:#4ade80; --warn:#f59e0b; --danger:#ef4444; }
+    html,body{height:100%}
+    body{margin:0;background:linear-gradient(180deg,#0b1220,#0f172a);color:var(--ink);font:14px/1.4 system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
+    .wrap{max-width:1100px;margin-inline:auto;padding:24px}
+    header{display:flex;gap:16px;align-items:center;justify-content:space-between;margin-bottom:18px}
+    h1{font-size:20px;margin:0;font-weight:650;letter-spacing:.2px}
+    .panel{background:var(--panel);border:1px solid #1f2a44;border-radius:16px;padding:16px;box-shadow:0 6px 18px rgba(0,0,0,.35)}
+    .row{display:flex;gap:12px;flex-wrap:wrap}
+    .row > *{flex:1 1 220px}
+    label{display:block;font-size:12px;text-transform:uppercase;color:var(--muted);margin-bottom:6px;letter-spacing:.5px}
+    select,button{background:#0e1628;color:var(--ink);border:1px solid #24314f;border-radius:10px;padding:10px 12px}
+    button{cursor:pointer}
+    button.primary{background:#1a2a52;border-color:#2e4170}
+    button.ghost{background:transparent}
+    .pill{display:inline-flex;gap:8px;align-items:center;background:#0e1628;border:1px solid #24314f;border-radius:999px;padding:8px 12px}
+    .grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+    .card{background:#0e1628;border:1px solid #24314f;border-radius:12px;padding:12px}
+    .card b{display:block;font-size:18px}
+    .chart-wrap{position:relative;height:520px}
+    canvas{display:block;width:100%;height:100%}
+    .legend{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+    .legend .item{display:flex;align-items:center;gap:6px;padding:6px 10px;border:1px solid #223154;border-radius:999px;background:#0e1628}
+    .swatch{width:18px;height:0;border-bottom:2px solid #789;border-radius:2px}
+    table{width:100%;border-collapse:collapse;font-size:13px}
+    th,td{padding:6px 8px;border-bottom:1px solid #223154}
+    th{color:#c7d2fe;text-align:left}
+    .muted{color:var(--muted)}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>2026 Health Plans – Total Cost Comparator</h1>
+      <div class="pill" title="Export current chart image">
+        <button id="exportBtn" class="ghost">Export PNG</button>
+      </div>
+    </header>
+
+    <section class="panel" aria-label="Controls">
+      <div class="row">
+        <div>
+          <label>Coverage</label>
+          <select id="tier">
+            <option value="FAMILY" selected>Family</option>
+            <option value="COUPLE">Couple</option>
+            <option value="SINGLE">Single</option>
+          </select>
+        </div>
+        <div>
+          <label>&nbsp;</label>
+          <button id="drawBtn" class="primary" type="button">Redraw</button>
+        </div>
+      </div>
+      <div class="muted" style="margin-top:8px">Data below is baked-in for the selected coverage and does not require any upload.</div>
+    </section>
+
+    <section class="panel" style="margin-top:16px">
+      <h3 style="margin:0 0 8px 0">Plan parameters (<span id="tierLabel">Family</span>)</h3>
+      <div class="row" id="cards"></div>
+    </section>
+
+    <section class="panel" style="margin-top:16px">
+      <div class="chart-wrap"><canvas id="chart"></canvas></div>
+      <div class="legend" id="legend"></div>
+    </section>
+
+    <footer class="muted">Runs entirely in your browser using Chart.js. The curves are computed from fixed plan parameters; no uploads needed.</footer>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <script>
+    const fmt = n => new Intl.NumberFormat().format(n);
+    const $ = id => document.getElementById(id);
+
+    // --- Plan parameters (baked-in) ---
+    const PLANS = {
+      FAMILY: {
+        xPoints: [0,500,1000,2000,3000,4000,5000,6000,7000,8000,9000,10000,11000,12000,13000,14000,15000,16000,17000,18000,19000,20000,21000,22000,23000,24000,25000,30000,35000,40000,45000,50000,60000,70000,80000],
+        plans: {
+          'PPO 90': { premiumYear:11800.8, coins:0.10, ded:0, oopMax:7000 },
+          'PPO 70': { premiumYear: 4234.8, coins:0.30, ded:0, oopMax:9000 },
+          'HSA 80': { premiumYear: 3368.4, employer:1700, coins:0.20, ded:3300, oopMax:9000 },
+          'HSA 60': { premiumYear: 1533.6, employer:3050, coins:0.40, ded:6000, oopMax:15200 }
+        }
+      },
+      COUPLE: {
+        xPoints: [0,500,1000,2000,3000,4000,5000,6000,7000,8000,9000,10000,11000,12000,13000,14000,15000,16000,17000,18000,19000,20000,21000,22000,23000,24000,25000,30000,35000,40000,45000,50000,60000,70000,80000],
+        plans: {
+          'PPO 90': { premiumYear:7459.2, coins:0.10, ded:0, oopMax:7000 },
+          'PPO 70': { premiumYear:2739.6, coins:0.30, ded:0, oopMax:9000 },
+          'HSA 80': { premiumYear:2838.0, employer:1700, coins:0.20, ded:3300, oopMax:9000 },
+          'HSA 60': { premiumYear:1317.6, employer:3050, coins:0.40, ded:6000, oopMax:15200 }
+        }
+      },
+      SINGLE: {
+        xPoints: [0,500,1000,2000,3000,4000,5000,6000,7000,8000,9000,10000,11000,12000,13000,14000,15000,16000,17000,18000,19000,20000,21000,22000,23000,24000,25000,30000,35000,40000,45000,50000,60000,70000,80000],
+        plans: {
+          'PPO 90': { premiumYear:3702.0, coins:0.10, ded:0, oopMax:3500 },
+          'PPO 70': { premiumYear:1388.4, coins:0.30, ded:0, oopMax:5100 },
+          'HSA 80': { premiumYear:1453.2, employer:1700, coins:0.20, ded:1700, oopMax:5100 },
+          'HSA 60': { premiumYear:826.8, employer:3050, coins:0.40, ded:3050, oopMax:7600 }
+        }
+      }
+    };
+
+    function totalCost(plan, spend){
+      if(plan.employer !== undefined){
+        const base = plan.premiumYear - plan.employer; // may be negative
+        const oopBeforeCap = spend <= plan.ded ? spend : plan.ded + (spend - plan.ded) * plan.coins;
+        const oop = Math.min(oopBeforeCap, plan.oopMax);
+        return base + oop;
+      } else {
+        const base = plan.premiumYear;
+        const oop = Math.min(spend * plan.coins + plan.ded, plan.oopMax); // ded=0 for PPOs here
+        return base + oop;
+      }
+    }
+
+    function computeSeries(tier){
+      const cfg = PLANS[tier];
+      const xs = cfg.xPoints;
+      const labels = Object.keys(cfg.plans);
+      const series = {};
+      labels.forEach(name => {
+        const p = cfg.plans[name];
+        series[name] = xs.map(x => Number(totalCost(p, x).toFixed(0)));
+      });
+      series['HSA 60 - HSA 80'] = xs.map((_,i) => Number((series['HSA 60'][i] - series['HSA 80'][i]).toFixed(0)));
+      return { xs, series };
+    }
+
+    function renderCards(tier){
+      const container = document.getElementById('cards');
+      const tierLabel = document.getElementById('tierLabel');
+      tierLabel.textContent = tier.charAt(0) + tier.slice(1).toLowerCase();
+      container.innerHTML='';
+      const order = ['PPO 90','PPO 70','HSA 80','HSA 60'];
+      order.forEach(key => {
+        const p = PLANS[tier].plans[key];
+        const employer = p.employer || 0;
+        const netPrem = p.premiumYear - employer;
+        const el = document.createElement('div');
+        el.className = 'card';
+        el.innerHTML = `
+          <div class="muted">${key}</div>
+          <table>
+            <tr><td>Premium / year</td><td>$${fmt(p.premiumYear.toFixed(2))}</td></tr>
+            ${p.employer!==undefined? `<tr><td>Employer contribution</td><td>$${fmt(p.employer.toFixed(2))}</td></tr>`:''}
+            ${p.employer!==undefined? `<tr><td>Net premium − contrib</td><td>${netPrem<0?'-':''}$${fmt(Math.abs(netPrem).toFixed(2))}</td></tr>`:''}
+            <tr><td>Deductible</td><td>$${fmt(p.ded)}</td></tr>
+            <tr><td>Coinsurance</td><td>${Math.round(p.coins*100)}%</td></tr>
+            <tr><td>OOP max</td><td>$${fmt(p.oopMax)}</td></tr>
+          </table>`;
+        container.appendChild(el);
+      });
+    }
+
+    let chart;
+    function draw(){
+      const tier = $('tier').value;
+      renderCards(tier);
+      const { xs, series } = computeSeries(tier);
+
+      const colors = { ppo90:'#3b82f6', ppo70:'#f59e0b', hsa80:'#22c55e', hsa60:'#60a5fa', delta:'#ef4444' };
+      const ds = [
+        {key:'PPO 90', c:colors.ppo90, dash:[6,6]},
+        {key:'PPO 70', c:colors.ppo70},
+        {key:'HSA 80', c:colors.hsa80, dash:[6,6]},
+        {key:'HSA 60', c:colors.hsa60},
+        {key:'HSA 60 - HSA 80', c:colors.delta}
+      ].map(({key,c,dash}) => ({
+        label:key,
+        data: xs.map((x,i)=>({x, y: series[key][i]})),
+        borderColor:c,
+        borderWidth:2,
+        borderDash:dash,
+        pointRadius:1.4,
+        tension:.2,
+        fill:false
+      }));
+
+      const ctx = $('chart').getContext('2d');
+      if(chart) chart.destroy();
+      chart = new Chart(ctx, {
+        type:'line',
+        data:{ datasets: ds },
+        options:{
+          resizeDelay: 200,
+          responsive:true,
+          maintainAspectRatio:false,
+          interaction:{mode:'nearest',intersect:false},
+          scales:{
+            x:{ type:'linear', title:{display:true,text:'In-network spending ($)'}, grid:{ color:'rgba(255,255,255,.06)'} },
+            y:{ title:{display:true,text:'Total cost ($)'}, grid:{ color:'rgba(255,255,255,.06)'}, ticks:{ callback:v=>'$'+fmt(v) } }
+          },
+          plugins:{
+            legend:{ display:true, labels:{ color:'#c7d2fe' } },
+            tooltip:{ callbacks:{ label:(ctx)=>`${ctx.dataset.label}: $${fmt(ctx.parsed.y)}` } },
+            title:{ display:true, text:`Total cost by in‑network spending — ${tier}` }
+          },
+          elements:{ line:{ cubicInterpolationMode:'monotone' } }
+        }
+      });
+
+      const legend = $('legend'); legend.innerHTML = '';
+      for(const d of chart.data.datasets){
+        const item = document.createElement('div'); item.className='item';
+        const sw = document.createElement('div'); sw.className='swatch'; sw.style.borderBottom = (d.borderDash? '2px dashed '+d.borderColor : '2px solid '+d.borderColor);
+        const txt = document.createElement('span'); txt.textContent = d.label;
+        item.appendChild(sw); item.appendChild(txt); legend.appendChild(item);
+      }
+    }
+
+    $('drawBtn').addEventListener('click', draw);
+    $('tier').addEventListener('change', draw);
+    $('exportBtn').addEventListener('click', () => {
+      if(!chart){ draw(); }
+      const tier = $('tier').value;
+      const url = chart.toBase64Image();
+      const a = document.createElement('a'); a.href = url; a.download = `health-plan-comparison-${tier.toLowerCase()}.png`; a.click();
+    });
+
+    // --- simple console self-tests to guard regressions ---
+    (function runTests(){
+      const assertEq = (desc, a, b) => {
+        if(a !== b) console.error('TEST FAIL:', desc, a, '!==', b); else console.log('TEST OK:', desc);
+      };
+      // FAMILY deltas
+      let {xs, series} = computeSeries('FAMILY');
+      const idx = x => xs.indexOf(x);
+      assertEq('FAMILY delta @0', series['HSA 60 - HSA 80'][idx(0)], -3185);
+      assertEq('FAMILY delta @4000', series['HSA 60 - HSA 80'][idx(4000)], -2625);
+      assertEq('FAMILY delta @12000', series['HSA 60 - HSA 80'][idx(12000)], 175);
+      assertEq('FAMILY delta @30000', series['HSA 60 - HSA 80'][idx(30000)], 3375);
+      // FAMILY first row sanity checks
+      assertEq('FAMILY PPO90 @0', series['PPO 90'][idx(0)], 11801);
+      assertEq('FAMILY PPO70 @0', series['PPO 70'][idx(0)], 4235);
+      assertEq('FAMILY HSA80 @0', series['HSA 80'][idx(0)], 1668);
+      assertEq('FAMILY HSA60 @0', series['HSA 60'][idx(0)], -1516);
+      // COUPLE deltas
+      ({xs, series} = computeSeries('COUPLE'));
+      const idx2 = x => xs.indexOf(x);
+      assertEq('COUPLE delta @0', series['HSA 60 - HSA 80'][idx2(0)], -2870);
+      assertEq('COUPLE delta @4000', series['HSA 60 - HSA 80'][idx2(4000)], -2310);
+      assertEq('COUPLE delta @10000', series['HSA 60 - HSA 80'][idx2(10000)], 90);
+      assertEq('COUPLE delta @30000', series['HSA 60 - HSA 80'][idx2(30000)], 3690);
+      assertEq('COUPLE delta @35000', series['HSA 60 - HSA 80'][idx2(35000)], 3330);
+      // SINGLE deltas
+      ({xs, series} = computeSeries('SINGLE'));
+      const idx3 = x => xs.indexOf(x);
+      assertEq('SINGLE delta @0', series['HSA 60 - HSA 80'][idx3(0)], -1976);
+      assertEq('SINGLE delta @2000', series['HSA 60 - HSA 80'][idx3(2000)], -1736);
+      assertEq('SINGLE delta @8000', series['HSA 60 - HSA 80'][idx3(8000)], 94);
+      assertEq('SINGLE delta @10000', series['HSA 60 - HSA 80'][idx3(10000)], 494);
+      assertEq('SINGLE delta @25000', series['HSA 60 - HSA 80'][idx3(25000)], 524);
+    })();
+
+    // initial render
+    draw();
+  </script>
+</body>
+</html>
