@@ -10,6 +10,7 @@
  *   on page 2+, we carry forward the last seen header context.
  * - Extracts service rows like: 02/05/2025 OFFICE VISIT $223.00 $0.00 $102.36 B6 N3
  * - Skips legend-only pages (e.g., pages that have "Code Description" + code lines but no services).
+ * - V3 parity: negative/parenthesized currency, wrapped/multi-line rows, across-page row carry.
  *
  * Deps
  * ----
@@ -18,7 +19,7 @@
  *
  * Usage
  * -----
- *   node extract_claims_to_csv.mjs PrintFriendlyEOB.pdf history.csv
+ *   node extract_claims_to_csv_V3_handles_multi-pages.js PrintFriendlyEOB.pdf history.csv
  */
 
 import fs from "fs";
@@ -27,7 +28,7 @@ import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf.mjs";
 
 // ---------------- CLI ----------------
 if (process.argv.length < 4) {
-  console.error("Usage: node extract_claims_to_csv.mjs <input.pdf> <output.csv>");
+  console.error("Usage: node extract_claims_to_csv_V3_handles_multi-pages.js <input.pdf> <output.csv>");
   process.exit(1);
 }
 const inputPdf = process.argv[2];
@@ -72,27 +73,38 @@ function writeCsv(rows, outPath) {
   fs.writeFileSync(outPath, out, "utf8");
 }
 
+// --- Money normalization (V3: supports negatives and parentheses) ---
 function moneyToStr(val) {
-  if (!val) return "";
-  let s = val.replace(/,/g, "").trim();
+  if (val == null) return "";
+  let s = String(val).trim().replace(/,/g, "");
+  // leading $ anywhere
   if (s.startsWith("$")) s = s.slice(1);
-  const num = Number.parseFloat(s);
-  return Number.isFinite(num) ? num.toFixed(2) : s;
+  // parentheses -> negative
+  if (s.startsWith("(") && s.endsWith(")")) s = "-" + s.slice(1, -1);
+  // stray dollar signs
+  s = s.replace(/\$/g, "");
+  const n = Number(s);
+  return Number.isFinite(n) ? n.toFixed(2) : s;
 }
 
-// ---------- Patterns (mirrors the Python script) ----------
-const CURRENCY = String.raw`(?:\$?(?:\d{1,3}(?:,\d{3})*|\d+)(?:\.\d{2})?)`;
+// ---------- Patterns (mirrors the Python V3 script) ----------
+const CURRENCY = String.raw`\(?-?\$?(?:\d{1,3}(?:,\d{3})*|\d+)(?:\.\d{2})?\)?`;
 
+// final, single-line service row (after assembly)
 const SERVICE_ROW_RE = new RegExp(
-  String.raw`^` +
-    String.raw`(?<ServiceDate>\d{2}\/\d{2}\/\d{4})\s+` +   // date
-    String.raw`(?<Service>.*?)\s+` +                       // description (lazy)
-    String.raw`(?<ProviderBilled>${CURRENCY})\s+` +
-    String.raw`(?<DMBA_Paid>${CURRENCY})\s+` +
-    String.raw`(?<YourResp>${CURRENCY})\s+` +
-    String.raw`(?<MessageCodes>[A-Z0-9 ]{1,40})` +
-  String.raw`$`
+  String.raw`^`
+  + String.raw`(?<ServiceDate>\d{2}\/\d{2}\/\d{4})\s+`
+  + String.raw`(?<Service>.*?)\s+`
+  + String.raw`(?<ProviderBilled>${CURRENCY})\s+`
+  + String.raw`(?<DMBA_Paid>${CURRENCY})\s+`
+  + String.raw`(?<YourResp>${CURRENCY})\s+`
+  + String.raw`(?<MessageCodes>[A-Z0-9 ]{1,40})`
+  + String.raw`$`
 );
+
+// helpers for assembly
+const DATE_START_RE = /^\d{2}\/\d{2}\/\d{4}\b/;
+const CURRENCY_ANY_RE = new RegExp(CURRENCY, "g");
 
 const HEADER_PATTERNS = [
   ["Claim",          /\bClaim\s*:?\s*(T\d{7,})/s],
@@ -120,24 +132,61 @@ function extractHeaderFields(pageText) {
   return header;
 }
 
-function extractServiceLines(pageText) {
+// V3: assemble rows from lines (wraps + across pages)
+function assembleRowsFromLines(lines, pending = null) {
   const rows = [];
-  for (const raw of pageText.split("\n")) {
-    const line = raw.trim();
+  let buf = pending;
+
+  const tryFinalize = (buffer) => {
+    if (!buffer) return null;
+    const currencyCount = (buffer.match(CURRENCY_ANY_RE) || []).length;
+    if (currencyCount >= 3) {
+      const oneLine = buffer.replace(/\s+/g, " ").trim();
+      if (SERVICE_ROW_RE.test(oneLine)) return oneLine;
+    }
+    return null;
+  };
+
+  for (const raw of lines) {
+    const line = (raw || "").trim();
     if (!line) continue;
-    const m = line.match(SERVICE_ROW_RE);
-    if (m?.groups) {
-      rows.push({
-        "Service Date": m.groups.ServiceDate,
-        "Services Provided": m.groups.Service.trim(),
-        "Provider Billed ($)": moneyToStr(m.groups.ProviderBilled),
-        "DMBA Paid ($)": moneyToStr(m.groups.DMBA_Paid),
-        "Your Responsibility ($)": moneyToStr(m.groups.YourResp),
-        "Message Codes": m.groups.MessageCodes.trim(),
-      });
+
+    if (buf == null) {
+      // only begin a row if the line starts with a date
+      if (DATE_START_RE.test(line)) {
+        buf = line;
+        const done = tryFinalize(buf);
+        if (done) {
+          rows.push(done);
+          buf = null;
+        }
+      }
+    } else {
+      // continue current buffer
+      buf = `${buf} ${line}`;
+      const done = tryFinalize(buf);
+      if (done) {
+        rows.push(done);
+        buf = null;
+      }
     }
   }
-  return rows;
+
+  return { completedRows: rows, pending: buf };
+}
+
+// turn a finalized (assembled) row string into an object
+function parseServiceRow(row) {
+  const m = row.match(SERVICE_ROW_RE);
+  if (!m?.groups) throw new Error(`row did not match service pattern: ${row}`);
+  return {
+    "Service Date": m.groups.ServiceDate,
+    "Services Provided": m.groups.Service.trim(),
+    "Provider Billed ($)": moneyToStr(m.groups.ProviderBilled),
+    "DMBA Paid ($)": moneyToStr(m.groups.DMBA_Paid),
+    "Your Responsibility ($)": moneyToStr(m.groups.YourResp),
+    "Message Codes": m.groups.MessageCodes.trim(),
+  };
 }
 
 function pageFooterNumber(pageText) {
@@ -196,6 +245,7 @@ function pageTextFromItems(textContent, { yRound = 1, sortY = "desc" } = {}) {
 
     const allRows = [];
     let currentCtx = null; // carry-forward header context across continuation pages
+    let pendingRow = null; // carry a partially built row across page boundaries
 
     for (let i = 1; i <= doc.numPages; i++) {
       const page = await doc.getPage(i);
@@ -205,11 +255,14 @@ function pageTextFromItems(textContent, { yRound = 1, sortY = "desc" } = {}) {
 
       const header = extractHeaderFields(pageText);
       const hasClaimHeader = Boolean(header["Claim"]);
-      const serviceRows = extractServiceLines(pageText);
-      const numRows = serviceRows.length;
+
+      // assemble rows from this page's lines, seeding with any pending buffer
+      const lines = pageText.split("\n");
+      const { completedRows, pending } = assembleRowsFromLines(lines, pendingRow);
+      pendingRow = pending;
 
       // Legend-only pages: skip (keep currentCtx unchanged)
-      if (isLegendOnlyPage(pageText, numRows)) {
+      if (isLegendOnlyPage(pageText, completedRows.length)) {
         continue;
       }
 
@@ -219,19 +272,18 @@ function pageTextFromItems(textContent, { yRound = 1, sortY = "desc" } = {}) {
       // Establish / maintain context
       if (hasClaimHeader) {
         currentCtx = header; // start (or restart) context
+      } else if (!currentCtx) {
+        // No header & no context; avoid mis-stamping rows
+        completedRows.length = 0;
       } else {
-        if (!currentCtx) {
-          // No header & no context; avoid mis-stamping rows if any appear
-          // (Skip emitting until a real header is found.)
-        } else {
-          // Treat as continuation (we have a context); footerNum or rows support this
-          // No change needed: just reuse currentCtx
-        }
+        // Continuation page: keep using currentCtx (footer or rows imply continuation)
+        void hasContinuationFooter; // doc, not needed for logic now
       }
 
       // Emit rows only if we have context to stamp them with
-      if (numRows > 0 && currentCtx) {
-        for (const r of serviceRows) {
+      if (completedRows.length && currentCtx) {
+        for (const t of completedRows) {
+          const r = parseServiceRow(t);
           allRows.push({
             "Claim": currentCtx["Claim"] || "",
             "Patient": currentCtx["Patient"] || "",
@@ -246,10 +298,11 @@ function pageTextFromItems(textContent, { yRound = 1, sortY = "desc" } = {}) {
         }
       }
 
-      // Optional: detect totals (not strictly needed for context handling)
-      // if (TOTALS_RE.test(pageText)) { /* could mark end-of-claim if you want */ }
+      // (Optional) react to TOTALS_RE if you want to mark end-of-claim; context persists until replaced.
+      // if (TOTALS_RE.test(pageText)) { /* no-op for now */ }
     }
 
+    // If the PDF ends with an incomplete pending row, we ignore it (not finalized).
     writeCsv(allRows, path.resolve(outputCsv));
     console.log(`Extracted ${allRows.length} service line(s) to: ${outputCsv}`);
   } catch (err) {
@@ -257,3 +310,4 @@ function pageTextFromItems(textContent, { yRound = 1, sortY = "desc" } = {}) {
     process.exit(1);
   }
 })();
+
