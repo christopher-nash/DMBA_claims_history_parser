@@ -1,0 +1,21 @@
+# Don't accidentally check in your data files
+*.pdf
+*.csv
+
+# Node.js
+node_modules/
+npm-debug.log*
+.env
+.env.local
+dist/
+.cache/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+.venv/
+venv/
+.env
