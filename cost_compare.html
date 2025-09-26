@@ -61,6 +61,13 @@
           <label>&nbsp;</label>
           <button id="drawBtn" class="primary" type="button">Redraw</button>
         </div>
+        <div>
+          <label>Display</label>
+          <div class="row" style="gap:8px">
+            <label class="pill" style="gap:6px"><input id="toggleIntersections" type="checkbox" checked /> Show intersections</label>
+            <label class="pill" style="gap:6px"><input id="toggleDelta" type="checkbox" checked /> Show HSA 60 − HSA 80</label>
+          </div>
+        </div>
       </div>
       <div class="muted" style="margin-top:8px">Data below is baked-in for the selected coverage and does not require any upload.</div>
     </section>
@@ -219,13 +226,14 @@
       const { xs, series } = computeSeries(tier);
 
       const colors = { ppo90:'#3b82f6', ppo70:'#f59e0b', hsa80:'#22c55e', hsa60:'#60a5fa', delta:'#ef4444', cross:'#eab308' };
-      const ds = [
+      const dsBase = [
         {key:'PPO 90', c:colors.ppo90, dash:[6,6]},
         {key:'PPO 70', c:colors.ppo70},
         {key:'HSA 80', c:colors.hsa80, dash:[6,6]},
-        {key:'HSA 60', c:colors.hsa60},
-        {key:'HSA 60 - HSA 80', c:colors.delta}
-      ].map(({key,c,dash}) => ({
+        {key:'HSA 60', c:colors.hsa60}
+      ];
+      if($('toggleDelta').checked){ dsBase.push({key:'HSA 60 - HSA 80', c:colors.delta}); }
+      const ds = dsBase.map(({key,c,dash}) => ({
         label:key,
         data: xs.map((x,i)=>({x, y: series[key][i]})),
         borderColor:c,
@@ -236,41 +244,42 @@
         fill:false
       }));
 
-      // --- Compute intersections ---
-      const pairs = [
-        ['HSA 60','HSA 80'],
-        ['HSA 60','PPO 70'],
-        ['HSA 60','PPO 90'],
-        ['PPO 70','PPO 90'],
-        ['PPO 70','HSA 80'],
-        ['PPO 90','HSA 80']
-      ];
+      // --- Compute intersections (optional) ---
       const crosses = [];
-      for(const [a,b] of pairs){
-        const hit = findIntersection(xs, series[a], series[b]);
-        if(hit){
-          crosses.push({a,b,x:hit.x,y:hit.y});
-          // add a vertical guide and a marker point
-          const yMin = Math.min(...Object.values(series).map(arr => Math.min(...arr)));
-          const yMax = Math.max(...Object.values(series).map(arr => Math.max(...arr)));
-          ds.push({
-            label:`× ${a} vs ${b}`,
-            data:[{x:hit.x,y:yMin},{x:hit.x,y:yMax}],
-            borderColor:colors.cross,
-            borderDash:[2,6],
-            borderWidth:1.5,
-            pointRadius:0,
-            fill:false,
-          });
-          ds.push({
-            type:'scatter',
-            label:`• ${a}∩${b}`,
-            data:[{x:hit.x,y:hit.y}],
-            pointRadius:4,
-            pointHoverRadius:6,
-            pointBackgroundColor:colors.cross,
-            borderColor:colors.cross
-          });
+      if($('toggleIntersections').checked){
+        const pairs = [
+          ['HSA 60','HSA 80'],
+          ['HSA 60','PPO 70'],
+          ['HSA 60','PPO 90'],
+          ['PPO 70','PPO 90'],
+          ['PPO 70','HSA 80'],
+          ['PPO 90','HSA 80']
+        ];
+        for(const [a,b] of pairs){
+          const hit = findIntersection(xs, series[a], series[b]);
+          if(hit){
+            crosses.push({a,b,x:hit.x,y:hit.y});
+            const yMin = Math.min(...Object.values(series).map(arr => Math.min(...arr)));
+            const yMax = Math.max(...Object.values(series).map(arr => Math.max(...arr)));
+            ds.push({
+              label:`× ${a} vs ${b}`,
+              data:[{x:hit.x,y:yMin},{x:hit.x,y:yMax}],
+              borderColor:colors.cross,
+              borderDash:[2,6],
+              borderWidth:1.5,
+              pointRadius:0,
+              fill:false,
+            });
+            ds.push({
+              type:'scatter',
+              label:`• ${a}∩${b}`,
+              data:[{x:hit.x,y:hit.y}],
+              pointRadius:4,
+              pointHoverRadius:6,
+              pointBackgroundColor:colors.cross,
+              borderColor:colors.cross
+            });
+          }
         }
       }
 
@@ -317,7 +326,7 @@
 
       // Insights list with numeric intersections
       const ins = $('insights'); ins.innerHTML = '';
-      if(crosses.length){
+      if($('toggleIntersections').checked && crosses.length){
         const byPair = document.createElement('div'); byPair.className='card';
         let html = '<b>Intersections</b><ul style="margin:6px 0 0 16px">';
         for(const c of crosses){
@@ -336,6 +345,8 @@
     // Event handlers (single registration)
     $('drawBtn').addEventListener('click', draw);
     $('tier').addEventListener('change', draw);
+    $('toggleIntersections').addEventListener('change', draw);
+    $('toggleDelta').addEventListener('change', draw);
     $('exportBtn').addEventListener('click', () => {
       if(!chart){ draw(); }
       const tier = $('tier').value;
@@ -355,6 +366,7 @@
       const idx = x => xs.indexOf(x);
       assertEq('FAMILY delta @0', series['HSA 60 - HSA 80'][idx(0)], -3185);
       assertEq('FAMILY delta @4000', series['HSA 60 - HSA 80'][idx(4000)], -2625);
+      assertEq('FAMILY delta @8000', series['HSA 60 - HSA 80'][idx(8000)], -625);
       assertEq('FAMILY delta @12000', series['HSA 60 - HSA 80'][idx(12000)], 175);
       assertEq('FAMILY delta @30000', series['HSA 60 - HSA 80'][idx(30000)], 3375);
       // FAMILY intersections (approx.)
@@ -366,6 +378,7 @@
       const idx2 = x => xs.indexOf(x);
       assertEq('COUPLE delta @0', series['HSA 60 - HSA 80'][idx2(0)], -2870);
       assertEq('COUPLE delta @4000', series['HSA 60 - HSA 80'][idx2(4000)], -2310);
+      assertEq('COUPLE delta @8000', series['HSA 60 - HSA 80'][idx2(8000)], -310);
       assertEq('COUPLE delta @10000', series['HSA 60 - HSA 80'][idx2(10000)], 90);
       assertEq('COUPLE delta @30000', series['HSA 60 - HSA 80'][idx2(30000)], 3690);
       assertEq('COUPLE delta @35000', series['HSA 60 - HSA 80'][idx2(35000)], 3330);
@@ -384,6 +397,31 @@
       // SINGLE intersection (approx.)
       const i3 = findIntersection(xs, series['HSA 60'], series['HSA 80']);
       almostEq('SINGLE HSA60 vs HSA80 ~ $7,550', Math.round(i3.x), 7550, 5);
+
+      // Generic tests: shape & monotonicity
+      const tiers = ['FAMILY','COUPLE','SINGLE'];
+      const labels = ['PPO 90','PPO 70','HSA 80','HSA 60'];
+      for(const t of tiers){
+        const {xs:sx, series:sr} = computeSeries(t);
+        for(const lab of labels){
+          assertEq(`${t} ${lab} length`, sr[lab].length, sx.length);
+          // non-decreasing total costs
+          let ok = true;
+          for(let i=0;i<sr[lab].length-1;i++){ if(sr[lab][i+1] < sr[lab][i]){ ok=false; break; } }
+          if(!ok) console.error('TEST FAIL: monotonic', t, lab); else console.log('TEST OK: monotonic', t, lab);
+        }
+      }
+
+      // UI-toggle tests (non-destructive)
+      const prevDelta = $('toggleDelta').checked;
+      const prevInter = $('toggleIntersections').checked;
+      $('toggleDelta').checked = false; $('toggleIntersections').checked = false;
+      draw();
+      const labelsOff = chart.data.datasets.map(d=>d.label);
+      if(labelsOff.includes('HSA 60 - HSA 80')) console.error('TEST FAIL: delta visible when toggle off'); else console.log('TEST OK: delta hidden');
+      if(labelsOff.some(l=>l.startsWith('×')||l.startsWith('• '))) console.error('TEST FAIL: intersections visible when toggle off'); else console.log('TEST OK: intersections hidden');
+      // restore
+      $('toggleDelta').checked = prevDelta; $('toggleIntersections').checked = prevInter;
     })();
 
     // initial render
